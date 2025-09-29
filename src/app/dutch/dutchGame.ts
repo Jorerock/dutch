@@ -53,7 +53,7 @@ export function startRound(playerNames: string[]): GameState {
     penalty: 0,
   }));
   // Distribution des cartes
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 4; i++) {
     for (const player of players) {
       player.hand[i] = deck.pop()!;
     }

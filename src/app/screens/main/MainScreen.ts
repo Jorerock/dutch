@@ -36,10 +36,18 @@ export class MainScreen extends Container {
     drawnCardDisplay?: Container;
   } = {};
 
+  // Nouveau : état pour savoir si les cartes ont été révélées
+  private hasRevealed: boolean[] = [];
+  private isRevealing: boolean = false;
+  private revealTimeout: any = null;
+  private revealIndex: number[] = []; // index de la carte révélée pour chaque joueur
+  private revealDame: { playerIdx: number; cardIdx: number } | null = null;
+
   constructor() {
     super();
-    // Démarre une partie à 2 joueurs pour la démo
     this.state = startRound(["Joueur 1", "Joueur 2"]);
+    this.hasRevealed = this.state.players.map(() => false);
+    this.revealIndex = this.state.players.map(() => -1);
     this.createUI();
     this.renderState();
   }
@@ -79,11 +87,23 @@ export class MainScreen extends Container {
   }
 
   private renderState() {
-    if (this.ui.hands) {
-      for (const container of this.ui.hands) {
-        this.removeChild(container);
+    const permanentUI = [
+      this.ui.deck,
+      this.ui.discard,
+      this.ui.dutchBtn,
+      this.ui.dutchBtnText,
+    ];
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (!permanentUI.includes(child as any)) {
+        this.removeChild(child);
       }
     }
+    // if (this.ui.hands) {
+    //   for (const container of this.ui.hands) {
+    //     this.removeChild(container);
+    //   }
+    // }
     this.ui.hands = [];
 
     if (!this.state) return;
@@ -113,9 +133,64 @@ export class MainScreen extends Container {
       const y = positions[pIdx]?.y || margin;
 
       player.hand.forEach((card, cIdx) => {
-        const cardComponent = new CardComponent(card, () =>
-          this.onExchange(pIdx, cIdx),
-        );
+        let displayCard: Card | null = null;
+
+        // Révélation au premier tour : une seule carte
+        if (
+          pIdx === this.state!.currentPlayer &&
+          !this.hasRevealed[pIdx] &&
+          !this.drawnCard &&
+          this.revealIndex[pIdx] === cIdx
+        ) {
+          displayCard = card;
+        }
+
+        // Révélation Dame
+        if (
+          this.revealDame &&
+          this.revealDame.playerIdx === pIdx &&
+          this.revealDame.cardIdx === cIdx
+        ) {
+          displayCard = card;
+        }
+
+        const cardComponent = new CardComponent(displayCard, () => {
+          // Si c'est le premier tour et pas encore révélé, permettre de révéler une carte
+          if (
+            pIdx === this.state!.currentPlayer &&
+            !this.hasRevealed[pIdx] &&
+            !this.drawnCard &&
+            !this.isRevealing
+          ) {
+            this.isRevealing = true;
+            this.revealIndex[pIdx] = cIdx;
+            this.renderState();
+            this.revealTimeout = setTimeout(() => {
+              this.hasRevealed[pIdx] = true;
+              this.revealIndex[pIdx] = -1;
+              this.isRevealing = false;
+              this.renderState();
+            }, 2000);
+            return;
+          }
+
+          // Si une Dame est jouée, révéler la carte cliquée
+          if (this.revealDame) {
+            this.isRevealing = true;
+            this.revealDame = { playerIdx: pIdx, cardIdx: cIdx };
+            this.renderState();
+            setTimeout(() => {
+              this.revealDame = null;
+              this.isRevealing = false;
+              this.renderState();
+            }, 2000);
+            return;
+          }
+
+          // Sinon, échange classique
+          this.onExchange(pIdx, cIdx);
+        });
+
         cardComponent.x = baseX + cIdx * (cardW + 20);
         cardComponent.y = y;
         this.addChild(cardComponent);
@@ -297,7 +372,35 @@ export class MainScreen extends Container {
       return;
     }
 
-    // Ajouter la carte piochée directement à la pile de rejet
+    // Si la carte piochée est spéciale, appliquer son effet
+    if ([1, 11, 12, 13].includes(this.drawnCard.value)) {
+      // Dame : activer le mode révélation sur clic
+      if (this.drawnCard.value === 12) {
+        this.revealDame = {};
+        // On attend le clic sur une carte pour révéler
+        this.drawnCard = null; // On considère la Dame comme jouée
+        if (this.ui.drawnCardDisplay) {
+          this.removeChild(this.ui.drawnCardDisplay);
+          this.ui.drawnCardDisplay = undefined;
+        }
+        this.state.currentPlayer =
+          (this.state.currentPlayer + 1) % this.state.players.length;
+        this.renderState();
+        return;
+      }
+
+      // Autres effets spéciaux
+      playSpecialCard(
+        this.state,
+        this.state.currentPlayer,
+        0,
+        this.drawnCard,
+        this.state.currentPlayer,
+        0,
+      );
+    }
+
+    // Ajouter la carte piochée à la pile de rejet
     this.state.discardPile.push(this.drawnCard);
 
     // Réinitialiser la carte piochée
@@ -313,7 +416,6 @@ export class MainScreen extends Container {
     this.state.currentPlayer =
       (this.state.currentPlayer + 1) % this.state.players.length;
 
-    // Re-rendre l'état du jeu
     this.renderState();
   }
 
@@ -323,34 +425,33 @@ export class MainScreen extends Container {
       return;
     }
 
-    // Vérifier que c'est le tour du bon joueur
     if (pIdx !== this.state.currentPlayer) {
       alert("Ce n'est pas le tour de ce joueur !");
       return;
     }
 
-    // Effectuer l'échange
-    const oldCard = exchangeCard(this.state, pIdx, cIdx, this.drawnCard);
-
-    // Ajouter l'ancienne carte à la pile de rejet
-    if (oldCard) {
-      this.state.discardPile.push(oldCard);
+    // Si la carte piochée est spéciale, utiliser playSpecialCard
+    if ([1, 11, 13].includes(this.drawnCard.value)) {
+      playSpecialCard(this.state, pIdx, cIdx, this.drawnCard, pIdx, cIdx);
+      this.state.discardPile.push(this.drawnCard);
+    } else {
+      // Échange classique
+      const oldCard = exchangeCard(this.state, pIdx, cIdx, this.drawnCard);
+      if (oldCard) {
+        this.state.discardPile.push(oldCard);
+      }
     }
 
-    // Réinitialiser la carte piochée
     this.drawnCard = null;
 
-    // Supprimer l'affichage de la carte piochée
     if (this.ui.drawnCardDisplay) {
       this.removeChild(this.ui.drawnCardDisplay);
       this.ui.drawnCardDisplay = undefined;
     }
 
-    // Passer au joueur suivant
     this.state.currentPlayer =
       (this.state.currentPlayer + 1) % this.state.players.length;
 
-    // Re-rendre l'état du jeu
     this.renderState();
   }
 
