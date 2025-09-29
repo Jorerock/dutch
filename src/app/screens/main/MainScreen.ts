@@ -18,16 +18,22 @@ export class MainScreen extends Container {
   private state: GameState | null = null;
   private drawnCard: Card | null = null;
   private ui: {
-    deck?: Graphics;
-    discard?: Graphics;
+    deck?: CardComponent; // Changé de Graphics à CardComponent
+    discard?: CardComponent; // Changé de Graphics à CardComponent
     dutchBtn?: Graphics;
     dutchBtnText?: Text;
-    hands?: Container[]; // <-- Remplace Graphics[] par Container[]
+    hands?: Container[];
     cardTexts?: Text[];
     discardLabel?: Text;
     scores?: Text[];
-    [key: string]: Graphics | Text | Container[] | Text[] | undefined;
-    drawnCardDisplay?: Container; // Pour afficher la carte piochée
+    [key: string]:
+      | Graphics
+      | Text
+      | Container[]
+      | Text[]
+      | CardComponent
+      | undefined;
+    drawnCardDisplay?: Container;
   } = {};
 
   constructor() {
@@ -39,21 +45,15 @@ export class MainScreen extends Container {
   }
 
   private createUI() {
-    // Zone de pioche
-    const deckGfx = new Graphics();
-    deckGfx.rect(0, 0, 60, 90).fill({ color: 0x444488 });
-    deckGfx.interactive = true;
-    deckGfx.on("pointerdown", () => this.onDraw(false));
-    this.addChild(deckGfx);
-    this.ui.deck = deckGfx;
+    // Zone de pioche - utilise CardComponent avec carte face cachée (null)
+    const deckCard = new CardComponent(null, () => this.onDraw(false));
+    this.addChild(deckCard);
+    this.ui.deck = deckCard;
 
-    // Zone de pile de rejet
-    const discardGfx = new Graphics();
-    discardGfx.rect(0, 0, 60, 90).fill({ color: 0x884444 });
-    discardGfx.interactive = true;
-    discardGfx.on("pointerdown", () => this.onDraw(true));
-    this.addChild(discardGfx);
-    this.ui.discard = discardGfx;
+    // Zone de pile de rejet - sera mise à jour dans renderState()
+    const discardCard = new CardComponent(null, () => this.onDraw(true));
+    this.addChild(discardCard);
+    this.ui.discard = discardCard;
 
     // Bouton Dutch
     const dutchBtn = new Graphics();
@@ -68,10 +68,10 @@ export class MainScreen extends Container {
     this.ui.dutchBtnText = dutchText;
 
     // Positionnement initial (sera recalculé dans renderState)
-    deckGfx.x = 0;
-    deckGfx.y = 0;
-    discardGfx.x = 80;
-    discardGfx.y = 0;
+    deckCard.x = 0;
+    deckCard.y = 0;
+    discardCard.x = 120; // Espacé pour tenir compte de la largeur des cartes
+    discardCard.y = 0;
     dutchBtn.x = 0;
     dutchBtn.y = 120;
     dutchText.x = dutchBtn.x + 20;
@@ -99,6 +99,7 @@ export class MainScreen extends Container {
     const margin = 40;
 
     // Positions prédéfinies
+    // TODO DEFinir Emplacement pour jouer a plus de joueur
     const positions = [
       { y: margin, label: "top" }, // Joueur 1 en haut
       { y: height - cardH - margin, label: "bottom" }, // Joueur 2 en bas
@@ -109,7 +110,8 @@ export class MainScreen extends Container {
       const n = player.hand.length;
       const totalWidth = n * cardW + (n - 1) * 20;
       const baseX = Math.max((width - totalWidth) / 2, margin);
-      const y = positions[pIdx]?.y || margin; // Fallback sur margin si plus de 2 joueurs
+      const y = positions[pIdx]?.y || margin;
+
       player.hand.forEach((card, cIdx) => {
         const cardComponent = new CardComponent(card, () =>
           this.onExchange(pIdx, cIdx),
@@ -121,41 +123,37 @@ export class MainScreen extends Container {
       });
     });
 
-    // Affiche le dessus de la pile de rejet
-    if (this.ui.discardLabel) this.removeChild(this.ui.discardLabel);
-    if (this.state.discardPile.length > 0) {
-      const top = this.state.discardPile[this.state.discardPile.length - 1];
-      const t = new Text(this.cardLabel(top), { fontSize: 22, fill: 0xffffff });
-      t.x = width / 2 + 80;
-      t.y = height / 2 - 45;
-      this.addChild(t);
-      this.ui.discardLabel = t;
+    // Met à jour la pile de rejet avec la carte du dessus
+    if (this.ui.discard && this.state.discardPile.length > 0) {
+      // Supprimer l'ancienne carte de rejet
+      this.removeChild(this.ui.discard);
+
+      // Créer une nouvelle carte avec la carte du dessus de la pile
+      const topCard = this.state.discardPile[this.state.discardPile.length - 1];
+      const newDiscardCard = new CardComponent(topCard, () =>
+        this.onDraw(true),
+      );
+      this.addChild(newDiscardCard);
+      this.ui.discard = newDiscardCard;
+    } else if (this.ui.discard && this.state.discardPile.length === 0) {
+      // Si la pile est vide, afficher une carte vide
+      this.removeChild(this.ui.discard);
+      const emptyDiscardCard = new CardComponent(null, () => this.onDraw(true));
+      this.addChild(emptyDiscardCard);
+      this.ui.discard = emptyDiscardCard;
     }
 
-    // // // Affiche scores à droite de chaque main
-    // // TODO : faire un tableau de scores en haut à droite
-    // if (this.ui.scores) for (const s of this.ui.scores) this.removeChild(s);
-    // this.ui.scores = [];
-    // this.state.players.forEach((player, idx) => {
-    //   const t = new Text(`${player.name}: ${player.score} pts`, {
-    //     fontSize: 18,
-    //     fill: 0xffffff,
-    //   });
-    //   t.x = width - 180;
-    //   t.y = margin + idx * spacingY + 20;
-    //   this.addChild(t);
-    //   this.ui.scores.push(t);
-    // });
-
-    // Repositionne la pioche et le bouton Dutch
+    // Repositionne la pioche et la pile de rejet
     if (this.ui.deck) {
       this.ui.deck.x = width / 2 - 140;
-      this.ui.deck.y = height / 2 - 45;
+      this.ui.deck.y = height / 2 - 50; // Ajusté pour la hauteur des cartes
     }
     if (this.ui.discard) {
-      this.ui.discard.x = width / 2 + 70;
-      this.ui.discard.y = height / 2 - 45;
+      this.ui.discard.x = width / 2 + 60; // Ajusté pour l'espacement entre les cartes
+      this.ui.discard.y = height / 2 - 50;
     }
+
+    // Repositionne le bouton Dutch
     if (this.ui.dutchBtn) {
       this.ui.dutchBtn.x = width / 2 - 50;
       this.ui.dutchBtn.y = height - 80;
@@ -165,13 +163,14 @@ export class MainScreen extends Container {
       this.ui.dutchBtnText.y = height - 70;
     }
 
+    // Ajouter des indicateurs visuels pour le joueur courant
     this.state.players.forEach((player, pIdx) => {
       const n = player.hand.length;
       const totalWidth = n * cardW + (n - 1) * 20;
       const baseX = Math.max((width - totalWidth) / 2, margin);
       const y = positions[pIdx]?.y || margin;
 
-      // Ajouter un indicateur visuel pour le joueur courant
+      // Indicateur pour le joueur courant
       if (pIdx === this.state!.currentPlayer && !this.drawnCard) {
         const indicator = new Text("← Votre tour", {
           fontSize: 18,
@@ -182,36 +181,63 @@ export class MainScreen extends Container {
         this.addChild(indicator);
       }
 
-      player.hand.forEach((card, cIdx) => {
-        const cardComponent = new CardComponent(card, () =>
-          this.onExchange(pIdx, cIdx),
-        );
+      // Mettre en surbrillance les cartes échangeables
+      if (pIdx === this.state!.currentPlayer && this.drawnCard) {
+        player.hand.forEach((card, cIdx) => {
+          const cardComponent = new CardComponent(card, () =>
+            this.onExchange(pIdx, cIdx),
+          );
 
-        // Mettre en surbrillance les cartes échangeables
-        if (pIdx === this.state!.currentPlayer && this.drawnCard) {
-          // Ajouter un effet visuel (bordure verte par exemple)
+          // Ajouter un effet visuel (bordure verte)
           const highlight = new Graphics();
           highlight.lineStyle(3, 0x00ff00);
-          highlight.drawRect(-2, -2, 104, 144);
+          highlight.drawRect(-2, -2, 84, 104); // Ajusté aux dimensions de CardComponent
           cardComponent.addChild(highlight);
-        }
 
-        cardComponent.x = baseX + cIdx * (cardW + 20);
-        cardComponent.y = y;
-        this.addChild(cardComponent);
-        this.ui.hands!.push(cardComponent);
-      });
+          cardComponent.x = baseX + cIdx * (cardW + 20);
+          cardComponent.y = y;
+          this.addChild(cardComponent);
+          this.ui.hands!.push(cardComponent);
+        });
+      }
     });
+
+    // Ajouter des labels pour identifier les zones
+    this.addDeckLabels(width, height);
   }
 
-  private cardLabel(card: Card): string {
-    const names = { 1: "A", 11: "J", 12: "Q", 13: "K" };
-    const v = names[card.value as 1 | 11 | 12 | 13] || card.value;
-    const s = { hearts: "♥", diamonds: "♦", clubs: "♣", spades: "♠" }[
-      card.suit
-    ];
-    return `${v}${s}`;
+  private addDeckLabels(width: number, height: number) {
+    // Label pour la pioche
+    const deckLabel = new Text("Pioche", {
+      fontSize: 14,
+      fill: 0xffffff,
+      fontWeight: "bold",
+    });
+    deckLabel.anchor.set(0.5);
+    deckLabel.x = width / 2 - 140 + 40; // Centre de la carte de pioche
+    deckLabel.y = height / 2 + 60; // Sous la carte
+    this.addChild(deckLabel);
+
+    // Label pour la pile de rejet
+    const discardLabel = new Text("Défausse", {
+      fontSize: 14,
+      fill: 0xffffff,
+      fontWeight: "bold",
+    });
+    discardLabel.anchor.set(0.5);
+    discardLabel.x = width / 2 + 60 + 40; // Centre de la carte de défausse
+    discardLabel.y = height / 2 + 60; // Sous la carte
+    this.addChild(discardLabel);
   }
+
+  // private cardLabel(card: Card): string {
+  //   const names = { 1: "A", 11: "J", 12: "Q", 13: "K" };
+  //   const v = names[card.value as 1 | 11 | 12 | 13] || card.value;
+  //   const s = { hearts: "♥", diamonds: "♦", clubs: "♣", spades: "♠" }[
+  //     card.suit
+  //   ];
+  //   return `${v}${s}`;
+  // }
 
   private onDraw(fromDiscard: boolean) {
     if (!this.state) return;
@@ -225,14 +251,6 @@ export class MainScreen extends Container {
     this.drawnCard = card;
     removeDrawnCard(this.state, fromDiscard);
     this.showDrawnCard();
-    // // Pour la démo, échange la première carte du joueur courant
-    // const old = exchangeCard(this.state, this.state.currentPlayer, 0, card);
-    // removeDrawnCard(this.state, fromDiscard);
-    // if (old) this.state.discardPile.push(old);
-    // // Tour suivant
-    // this.state.currentPlayer =
-    //   (this.state.currentPlayer + 1) % this.state.players.length;
-    // this.renderState();
   }
 
   private showDrawnCard() {
@@ -247,7 +265,9 @@ export class MainScreen extends Container {
     const drawnCardContainer = new Container();
 
     // Créer le composant carte
-    const cardComponent = new CardComponent(this.drawnCard);
+    const cardComponent = new CardComponent(this.drawnCard, () =>
+      this.onDiscardDrawnCard(),
+    );
     cardComponent.x = 0;
     cardComponent.y = 0;
     drawnCardContainer.addChild(cardComponent);
@@ -258,7 +278,7 @@ export class MainScreen extends Container {
       fill: 0xffffff,
     });
     instructionText.x = 0;
-    instructionText.y = 80;
+    instructionText.y = 110; // Ajusté pour la hauteur des cartes
     drawnCardContainer.addChild(instructionText);
 
     // Positionner le conteneur (par exemple au centre-gauche)
@@ -269,6 +289,32 @@ export class MainScreen extends Container {
 
     this.addChild(drawnCardContainer);
     this.ui.drawnCardDisplay = drawnCardContainer;
+  }
+
+  private onDiscardDrawnCard() {
+    if (!this.state || !this.drawnCard) {
+      alert("Vous devez d'abord piocher une carte !");
+      return;
+    }
+
+    // Ajouter la carte piochée directement à la pile de rejet
+    this.state.discardPile.push(this.drawnCard);
+
+    // Réinitialiser la carte piochée
+    this.drawnCard = null;
+
+    // Supprimer l'affichage de la carte piochée
+    if (this.ui.drawnCardDisplay) {
+      this.removeChild(this.ui.drawnCardDisplay);
+      this.ui.drawnCardDisplay = undefined;
+    }
+
+    // Passer au joueur suivant
+    this.state.currentPlayer =
+      (this.state.currentPlayer + 1) % this.state.players.length;
+
+    // Re-rendre l'état du jeu
+    this.renderState();
   }
 
   private onExchange(pIdx: number, cIdx: number) {
@@ -307,23 +353,6 @@ export class MainScreen extends Container {
     // Re-rendre l'état du jeu
     this.renderState();
   }
-
-  // // Optionnel : ajouter une méthode pour annuler la pioche
-  // private cancelDraw() {
-  //   if (!this.drawnCard || !this.state) return;
-
-  //   // Remettre la carte dans la pioche
-  //   this.state.deck.push(this.drawnCard);
-  //   this.drawnCard = null;
-
-  //   // Supprimer l'affichage
-  //   if (this.ui.drawnCardDisplay) {
-  //     this.removeChild(this.ui.drawnCardDisplay);
-  //     this.ui.drawnCardDisplay = undefined;
-  //   }
-
-  //   this.renderState();
-  // }
 
   private onDutch() {
     if (!this.state) return;
